@@ -45,14 +45,21 @@ struct App : public Exp {
 
 struct PTree {
     PTree() = default;
-    PTree(std::unique_ptr<const PTree>&& left, std::unique_ptr<const PTree>&& right)
-        : left(std::move(left))
-        , right(std::move(right)) {}
+    PTree(std::unique_ptr<const PTree>&& l, std::unique_ptr<const PTree>&& r)
+        : l(std::move(l))
+        , r(std::move(r)) {}
 
-    bool here() const { return !left && !right; }
-    std::unique_ptr<const PTree> left;
-    std::unique_ptr<const PTree> right;
+    bool here() const { return !l && !r; }
+    std::unique_ptr<const PTree> l;
+    std::unique_ptr<const PTree> r;
 };
+
+using PTreePtr = std::unique_ptr<const PTree>;
+
+PTreePtr pt_here() { return std::make_unique<const PTree>(); }
+PTreePtr pt_l(PTreePtr&& l) { return std::make_unique<const PTree>(std::move(l), nullptr); }
+PTreePtr pt_r(PTreePtr&& r) { return std::make_unique<const PTree>(nullptr, std::move(r)); }
+PTreePtr pt_both(PTreePtr&& l, PTreePtr&& r) { return std::make_unique<const PTree>(std::move(l), std::move(r)); }
 
 /*
  * SExp (Structure in the paper)
@@ -116,6 +123,6 @@ struct World {
 };
 
 int main() {
-    std::cout << "Hello World!" << std::endl;
+    auto ptree = pt_both(pt_r(pt_here()), pt_here());
     return EXIT_SUCCESS;
 }
