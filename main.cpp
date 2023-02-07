@@ -1,199 +1,155 @@
+#include <cassert>
+
 #include <iostream>
 #include <memory>
-#include <optional>
-#include <string_view>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
+using namespace std::string_literals;
+
 #include "hash.h"
 
-struct SExp;
-struct World;
-
 /*
- * PTree (PosTree in the paper)
+ * Pos
  */
 
-struct PTree {
-    PTree() = default;
-    PTree(std::unique_ptr<const PTree>&& l, std::unique_ptr<const PTree>&& r)
+namespace pos {
+
+struct Tree {
+    Tree() = default;
+    Tree(std::unique_ptr<const Tree>&& l, std::unique_ptr<const Tree>&& r)
         : l(std::move(l))
         , r(std::move(r)) {}
-    PTree(PTree&& other) {
+
+    Tree(Tree&& other) {
         swap(*this, other);
     }
 
-    friend void swap(PTree& p1, PTree& p2) {
+    bool here() const { return !l && !r; }
+
+    std::string str() const {
+        if ( l &&  r) return "("s + l->str() + ", "s + r->str() + ")"s;
+        if (!l &&  r) return "(o, " + r->str() + ")"s;
+        if ( l && !r) return "("s + l->str() + ", x)"s;
+        assert(here());
+        return "!"s;
+    }
+
+    void dump() const { std::cout << str() << std::endl; }
+
+    friend void swap(Tree& p1, Tree& p2) {
         using std::swap;
         swap(p1.l, p2.l);
         swap(p1.r, p2.r);
     }
 
-    bool here() const { return !l && !r; }
-    std::unique_ptr<const PTree> l;
-    std::unique_ptr<const PTree> r;
+    std::unique_ptr<const Tree> l;
+    std::unique_ptr<const Tree> r;
 };
 
-using PTreePtr = std::unique_ptr<const PTree>;
+using Ptr = std::unique_ptr<const Tree>;
 
-PTreePtr pt_here() { return std::make_unique<const PTree>(); }
-PTreePtr pt_l(PTreePtr&& l) { return std::make_unique<const PTree>(std::move(l), nullptr); }
-PTreePtr pt_r(PTreePtr&& r) { return std::make_unique<const PTree>(nullptr, std::move(r)); }
-PTreePtr pt_both(PTreePtr&& l, PTreePtr&& r) { return std::make_unique<const PTree>(std::move(l), std::move(r)); }
+Ptr here() { return std::make_unique<const Tree>(nullptr, nullptr); }
+Ptr l(Ptr&& l) { return std::make_unique<const Tree>(std::move(l), nullptr); }
+Ptr r(Ptr&& r) { return std::make_unique<const Tree>(nullptr, std::move(r)); }
+Ptr both(Ptr&& l, Ptr&& r) { return std::make_unique<const Tree>(std::move(l), std::move(r)); }
+
+}
 
 /*
- * VarMap
+ * SExp
  */
 
-using VarMap = std::unordered_map<std::string, PTreePtr>;
+struct SExp {
+};
+
+struct SVar : public SExp {
+};
+
+struct SLam : public SExp {
+    SLam(std::unique_ptr<const pos::Tree>&& shape, std::unique_ptr<const SExp>&& body)
+        : shape(std::move(shape))
+        , body(std::move(body)) {}
+
+    std::unique_ptr<const pos::Tree> shape;
+    std::unique_ptr<const SExp> body;
+};
+
+struct SApp : public SExp {
+    SApp(std::unique_ptr<const SExp>&& callee, std::unique_ptr<const SExp>&& arg)
+        : callee(std::move(callee))
+        , arg(std::move(arg)) {}
+
+    std::unique_ptr<const SExp> callee;
+    std::unique_ptr<const SExp> arg;
+};
+
+using VarMap = std::unordered_map<std::string, pos::Tree*>;
+
+struct ESummary {
+    SExp sexp;
+    VarMap vm;
+};
 
 /*
  * Exp
  */
 
-struct ESum {
-    ESum(const SExp* sexp, VarMap&& vars)
-        : sexp(sexp)
-        , vars(std::move(vars)) {}
-
-    const SExp* sexp;
-    VarMap vars;
-};
-
 struct Exp {
-    virtual ~Exp() {}
-    virtual ESum summarize(World&) const;
+    void dump() const { std::cout << str() << std::endl; }
+    virtual std::string str() const = 0;
+    virtual std::unique_ptr<const SExp> summarise(VarMap&) const = 0;
 };
 
 struct Var : public Exp {
-    Var(std::string_view name)
-        : name(name) {}
+    Var(std::string&& name)
+        : name(std::move(name)) {}
 
-    ESum summarize(World& world) const override;
+    std::string str() const override { return name; }
+    std::unique_ptr<const SExp> summarise(VarMap&) const override {
+        return {};
+    }
 
-    std::string name;
+    const std::string name;
 };
 
 struct Lam : public Exp {
-    Lam(std::string_view name, const Exp* body)
-        : name(name)
-        , body(body) {}
+    Lam(std::string name, std::unique_ptr<const Exp>&& body)
+        : name(std::move(name))
+        , body(std::move(body)) {}
 
-    ESum summarize(World& world) const override;
+    std::string str() const override { return "(lam "s + name + "."s + body->str() + ")"s; }
+
+    std::unique_ptr<const SExp> summarise(VarMap&) const override {
+        return {};
+    }
 
     std::string name;
     std::unique_ptr<const Exp> body;
 };
 
 struct App : public Exp {
-    App(const Exp* callee, const Exp* arg)
-        : callee(callee)
-        , arg(arg) {}
+    App(std::unique_ptr<const Exp>&& callee, std::unique_ptr<const Exp>&& arg)
+        : callee(std::move(callee))
+        , arg(std::move(arg)) {}
 
-    ESum summarize(World& world) const override;
+    std::string str() const override { return "("s + callee->str() + " "s + arg->str() + ")"s; }
+
+    std::unique_ptr<const SExp> summarise(VarMap&) const override {
+        return {};
+    }
 
     std::unique_ptr<const Exp> callee;
     std::unique_ptr<const Exp> arg;
 };
 
-/*
- * SExp (Structure in the paper)
- */
-
-enum Tag : uint8_t { SVar, SLam, SApp };
-
-struct SExp {
-    SExp(World& world)
-        : world(world)
-        , id_(id_counter_++) {}
-    virtual ~SExp() {}
-
-    hash_t hash() const { return hash_; }
-
-    World& world;
-
-protected:
-    static hash_t id_counter_;
-    hash_t id_;
-    hash_t hash_;
-};
-
-size_t SExp::id_counter_ = 0;
-
-struct SVar : public SExp {
-    SVar(World& world)
-        : SExp(world) {
-        hash_ = hash_begin(uint8_t(Tag::SVar));
-    }
-};
-
-struct SLam : public SExp {
-    SLam(World& world, std::optional<PTreePtr>&& ptree, const SExp* body)
-        : SExp(world)
-        , ptree(std::move(ptree))
-        , body(body) {
-        hash_ = hash_begin(uint8_t(Tag::SLam));
-    }
-
-    std::optional<PTreePtr> ptree;
-    const SExp* body;
-};
-
-struct SApp : public SExp {
-    SApp(World& world, const SExp* callee, const SExp* arg)
-        : SExp(world)
-        , callee(callee)
-        , arg(arg) {
-        hash_ = hash_begin(uint8_t(Tag::SApp));
-    }
-
-    const SExp* callee;
-    const SExp* arg;
-};
-
-/*
- * World/Hashing
- */
-
-struct SExpHash {
-    hash_t operator()(const SExp* e) const { return e->hash(); }
-};
-
-struct SExpEq {
-    bool operator()(const SExp* e1, const SExp* e2) const { return e1 == e2; }
-};
-
-struct World {
-    const SExp* svar();
-    const SExp* slam(PTreePtr&& ptree, const SExp* body);
-    const SExp* sapp(const SExp* callee, const Exp* arg);
-
-    //const SExp* insert(
-
-    std::unordered_set<const SExp*, SExpHash, SExpEq> set;
-};
-
-/*
- * summarize
- */
-
-ESum Var::summarize(World& world) const {
-    VarMap vm;
-    vm.emplace(name, pt_here());
-    return {world.svar(), std::move(vm)};
-}
-
-ESum Lam::summarize(World& world) const {
-    auto&& [sbody, vm] = body->summarize(world);
-    if (auto i = vm.find(name); i != vm.end()) {
-        auto&& ptree = std::move(i->second);
-        vm.erase(i);
-        return {world.slam(std::move(ptree), sbody), std::move(vm)};
-    }
-    return {world.slam({}, sbody), std::move(vm)};
-}
-
 int main() {
-    auto ptree = pt_both(pt_r(pt_here()), pt_here());
-    return EXIT_SUCCESS;
+    // (f x) x
+    auto expr = std::make_unique<const App>(std::make_unique<const App>(std::make_unique<const Var>("f"s), std::make_unique<const Var>("x"s)), std::make_unique<const Var>("x"s));
+    // pos tree for x
+    auto pos = pos::both(pos::r(pos::here()), pos::here());
+    expr->dump();
+    pos->dump();
+    //auto ptree = pt_both(pt_r(pt_here()), pt_here());
 }
