@@ -1,8 +1,10 @@
 #include <cassert>
 
+#include <ios>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -61,18 +63,29 @@ Ptr both(Ptr&& l, Ptr&& r) { return std::make_unique<const Tree>(std::move(l), s
  * SExp
  */
 
+
+/// The pos::Ptr of free vars are owned by the VarMap.
+/// Once a variable is bound ownership is transferred to the corresponding SLam.
+
+using VarMap = std::unordered_map<std::string_view, pos::Ptr>;
+
 struct SExp {
+    virtual std::string str() const = 0;
+    void dump() const { std::cout << str() << std::endl; }
 };
 
 struct SVar : public SExp {
+    std::string str() const override { return "o"s; }
 };
 
 struct SLam : public SExp {
-    SLam(std::unique_ptr<const pos::Tree>&& shape, std::unique_ptr<const SExp>&& body)
-        : shape(std::move(shape))
+    SLam(pos::Ptr&& tree, std::unique_ptr<const SExp>&& body)
+        : tree(std::move(tree))
         , body(std::move(body)) {}
 
-    std::unique_ptr<const pos::Tree> shape;
+    std::string str() const override { return "(lam "s + tree->str() + "."s + body->str() + ")"s; }
+
+    pos::Ptr tree;
     std::unique_ptr<const SExp> body;
 };
 
@@ -81,15 +94,10 @@ struct SApp : public SExp {
         : callee(std::move(callee))
         , arg(std::move(arg)) {}
 
+    std::string str() const override { return "("s + callee->str() + " "s + arg->str() + ")"s; }
+
     std::unique_ptr<const SExp> callee;
     std::unique_ptr<const SExp> arg;
-};
-
-using VarMap = std::unordered_map<std::string, pos::Tree*>;
-
-struct ESummary {
-    SExp sexp;
-    VarMap vm;
 };
 
 /*
@@ -107,8 +115,11 @@ struct Var : public Exp {
         : name(std::move(name)) {}
 
     std::string str() const override { return name; }
-    std::unique_ptr<const SExp> summarise(VarMap&) const override {
-        return {};
+
+    std::unique_ptr<const SExp> summarise(VarMap& vm) const override {
+        auto [_, ins] = vm.emplace(name, pos::here());
+        assert(ins && "variable names must be unique");
+        return std::make_unique<const SVar>();
     }
 
     const std::string name;
@@ -121,8 +132,14 @@ struct Lam : public Exp {
 
     std::string str() const override { return "(lam "s + name + "."s + body->str() + ")"s; }
 
-    std::unique_ptr<const SExp> summarise(VarMap&) const override {
-        return {};
+    std::unique_ptr<const SExp> summarise(VarMap& vm) const override {
+        auto sbody = body->summarise(vm);
+        if (auto i = vm.find(name); i != vm.end()) {
+            auto tree = std::move(i->second);
+            vm.erase(i);
+            return std::make_unique<const SLam>(std::move(tree), std::move(sbody));
+        }
+        return std::make_unique<const SLam>(nullptr, std::move(sbody));
     }
 
     std::string name;
@@ -136,8 +153,10 @@ struct App : public Exp {
 
     std::string str() const override { return "("s + callee->str() + " "s + arg->str() + ")"s; }
 
-    std::unique_ptr<const SExp> summarise(VarMap&) const override {
-        return {};
+    std::unique_ptr<const SExp> summarise(VarMap& vm) const override {
+        auto scallee = callee->summarise(vm);
+        auto sarg = arg->summarise(vm);
+        return std::make_unique<const SApp>(std::move(scallee), std::move(sarg));
     }
 
     std::unique_ptr<const Exp> callee;
@@ -146,10 +165,12 @@ struct App : public Exp {
 
 int main() {
     // (f x) x
-    auto expr = std::make_unique<const App>(std::make_unique<const App>(std::make_unique<const Var>("f"s), std::make_unique<const Var>("x"s)), std::make_unique<const Var>("x"s));
+    auto exp = std::make_unique<const App>(std::make_unique<const App>(std::make_unique<const Var>("f"s), std::make_unique<const Var>("x"s)), std::make_unique<const Var>("x"s));
     // pos tree for x
     auto pos = pos::both(pos::r(pos::here()), pos::here());
-    expr->dump();
+    exp->dump();
     pos->dump();
-    //auto ptree = pt_both(pt_r(pt_here()), pt_here());
+    VarMap vm;
+    //auto sexp = exp->summarise(vm);
+    //sexp->dump();
 }
