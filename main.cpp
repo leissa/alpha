@@ -20,7 +20,7 @@ namespace pos {
 
 struct Tree {
     Tree() = default;
-    Tree(std::unique_ptr<const Tree>&& l, std::unique_ptr<const Tree>&& r)
+    Tree(std::unique_ptr<Tree>&& l, std::unique_ptr<Tree>&& r)
         : l(std::move(l))
         , r(std::move(r)) {}
 
@@ -33,9 +33,9 @@ struct Tree {
     std::string str() const {
         if ( l &&  r) return "("s + l->str() + ", "s + r->str() + ")"s;
         if (!l &&  r) return "(o, " + r->str() + ")"s;
-        if ( l && !r) return "("s + l->str() + ", x)"s;
+        if ( l && !r) return "("s + l->str() + ", o)"s;
         assert(here());
-        return "!"s;
+        return "x"s;
     }
 
     void dump() const { std::cout << str() << std::endl; }
@@ -46,16 +46,19 @@ struct Tree {
         swap(p1.r, p2.r);
     }
 
-    std::unique_ptr<const Tree> l;
-    std::unique_ptr<const Tree> r;
+    std::unique_ptr<Tree> l;
+    std::unique_ptr<Tree> r;
 };
 
-using Ptr = std::unique_ptr<const Tree>;
+using Ptr = std::unique_ptr<Tree>;
 
-Ptr here() { return std::make_unique<const Tree>(nullptr, nullptr); }
-Ptr l(Ptr&& l) { return std::make_unique<const Tree>(std::move(l), nullptr); }
-Ptr r(Ptr&& r) { return std::make_unique<const Tree>(nullptr, std::move(r)); }
-Ptr both(Ptr&& l, Ptr&& r) { return std::make_unique<const Tree>(std::move(l), std::move(r)); }
+Ptr here() { return std::make_unique<Tree>(nullptr, nullptr); }
+Ptr l(Ptr&& l) { return std::make_unique<Tree>(std::move(l), nullptr); }
+Ptr r(Ptr&& r) { return std::make_unique<Tree>(nullptr, std::move(r)); }
+Ptr both(Ptr&& l, Ptr&& r) { return std::make_unique<Tree>(std::move(l), std::move(r)); }
+
+template<bool L>
+Ptr one(Ptr&& p) { return L ? l(std::move(p)) : r(std::move(p)); }
 
 }
 
@@ -75,7 +78,7 @@ struct SExp {
 };
 
 struct SVar : public SExp {
-    std::string str() const override { return "o"s; }
+    std::string str() const override { return "!"s; }
 };
 
 struct SLam : public SExp {
@@ -90,14 +93,14 @@ struct SLam : public SExp {
 };
 
 struct SApp : public SExp {
-    SApp(std::unique_ptr<const SExp>&& callee, std::unique_ptr<const SExp>&& arg)
-        : callee(std::move(callee))
-        , arg(std::move(arg)) {}
+    SApp(std::unique_ptr<const SExp>&& l, std::unique_ptr<const SExp>&& r)
+        : l(std::move(l))
+        , r(std::move(r)) {}
 
-    std::string str() const override { return "("s + callee->str() + " "s + arg->str() + ")"s; }
+    std::string str() const override { return "("s + l->str() + " "s + r->str() + ")"s; }
 
-    std::unique_ptr<const SExp> callee;
-    std::unique_ptr<const SExp> arg;
+    std::unique_ptr<const SExp> l;
+    std::unique_ptr<const SExp> r;
 };
 
 /*
@@ -147,20 +150,36 @@ struct Lam : public Exp {
 };
 
 struct App : public Exp {
-    App(std::unique_ptr<const Exp>&& callee, std::unique_ptr<const Exp>&& arg)
-        : callee(std::move(callee))
-        , arg(std::move(arg)) {}
+    App(std::unique_ptr<const Exp>&& l, std::unique_ptr<const Exp>&& r)
+        : l(std::move(l))
+        , r(std::move(r)) {}
 
-    std::string str() const override { return "("s + callee->str() + " "s + arg->str() + ")"s; }
+    std::string str() const override { return "("s + l->str() + " "s + r->str() + ")"s; }
 
-    std::unique_ptr<const SExp> summarise(VarMap& vm) const override {
-        auto scallee = callee->summarise(vm);
-        auto sarg = arg->summarise(vm);
-        return std::make_unique<const SApp>(std::move(scallee), std::move(sarg));
+    std::unique_ptr<const SExp> summarise(VarMap& vml) const override {
+        VarMap vmr;
+        auto sl = l->summarise(vml);
+        auto sr = r->summarise(vmr);
+
+        for (auto& [_, tree] : vml)
+            tree = pos::l(std::move(tree));
+
+        for (auto& [name, r] : vmr) {
+            auto [i, ins] = vml.try_emplace(name, nullptr);
+            auto& tree = i->second;
+            if (ins)
+                tree = pos::r(std::move(r));
+            else {
+                assert(tree->l && !tree->r);
+                tree->r = std::move(r);
+            }
+        }
+
+        return std::make_unique<const SApp>(std::move(sl), std::move(sr));
     }
 
-    std::unique_ptr<const Exp> callee;
-    std::unique_ptr<const Exp> arg;
+    std::unique_ptr<const Exp> l;
+    std::unique_ptr<const Exp> r;
 };
 
 int main() {
@@ -171,6 +190,10 @@ int main() {
     exp->dump();
     pos->dump();
     VarMap vm;
-    //auto sexp = exp->summarise(vm);
-    //sexp->dump();
+    auto sexp = exp->summarise(vm);
+    sexp->dump();
+    for (auto&& [name, tree] : vm) {
+        std::cout << name << ":" << std::endl;
+        tree->dump();
+    }
 }
