@@ -8,9 +8,15 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "hash.h"
+
 using namespace std::string_literals;
 
-#include "hash.h"
+template<class T, class... Args>
+std::unique_ptr<T> mk(Args&&... args) { return std::make_unique<T>(std::forward<Args>(args)...); }
+
+template<class T>
+using Ptr = std::unique_ptr<T>;
 
 /*
  * Pos
@@ -20,7 +26,7 @@ namespace pos {
 
 struct Tree {
     Tree() = default;
-    Tree(std::unique_ptr<Tree>&& l, std::unique_ptr<Tree>&& r)
+    Tree(Ptr<Tree>&& l, Ptr<Tree>&& r)
         : l(std::move(l))
         , r(std::move(r)) {}
 
@@ -46,16 +52,16 @@ struct Tree {
         swap(p1.r, p2.r);
     }
 
-    std::unique_ptr<Tree> l;
-    std::unique_ptr<Tree> r;
+    Ptr<Tree> l;
+    Ptr<Tree> r;
 };
 
 using Ptr = std::unique_ptr<Tree>;
 
-Ptr here() { return std::make_unique<Tree>(nullptr, nullptr); }
-Ptr l(Ptr&& l) { return std::make_unique<Tree>(std::move(l), nullptr); }
-Ptr r(Ptr&& r) { return std::make_unique<Tree>(nullptr, std::move(r)); }
-Ptr both(Ptr&& l, Ptr&& r) { return std::make_unique<Tree>(std::move(l), std::move(r)); }
+Ptr here() { return mk<Tree>(nullptr, nullptr); }
+Ptr l(Ptr&& l) { return mk<Tree>(std::move(l), nullptr); }
+Ptr r(Ptr&& r) { return mk<Tree>(nullptr, std::move(r)); }
+Ptr both(Ptr&& l, Ptr&& r) { return mk<Tree>(std::move(l), std::move(r)); }
 
 template<bool L>
 Ptr one(Ptr&& p) { return L ? l(std::move(p)) : r(std::move(p)); }
@@ -82,25 +88,25 @@ struct SVar : public SExp {
 };
 
 struct SLam : public SExp {
-    SLam(pos::Ptr&& tree, std::unique_ptr<const SExp>&& body)
+    SLam(pos::Ptr&& tree, Ptr<SExp>&& body)
         : tree(std::move(tree))
         , body(std::move(body)) {}
 
     std::string str() const override { return "(lam "s + tree->str() + "."s + body->str() + ")"s; }
 
     pos::Ptr tree;
-    std::unique_ptr<const SExp> body;
+    Ptr<SExp> body;
 };
 
 struct SApp : public SExp {
-    SApp(std::unique_ptr<const SExp>&& l, std::unique_ptr<const SExp>&& r)
+    SApp(Ptr<SExp>&& l, Ptr<SExp>&& r)
         : l(std::move(l))
         , r(std::move(r)) {}
 
     std::string str() const override { return "("s + l->str() + " "s + r->str() + ")"s; }
 
-    std::unique_ptr<const SExp> l;
-    std::unique_ptr<const SExp> r;
+    Ptr<SExp> l;
+    Ptr<SExp> r;
 };
 
 /*
@@ -110,7 +116,7 @@ struct SApp : public SExp {
 struct Exp {
     void dump() const { std::cout << str() << std::endl; }
     virtual std::string str() const = 0;
-    virtual std::unique_ptr<const SExp> summarise(VarMap&) const = 0;
+    virtual Ptr<SExp> summarise(VarMap&) const = 0;
 };
 
 struct Var : public Exp {
@@ -119,44 +125,44 @@ struct Var : public Exp {
 
     std::string str() const override { return name; }
 
-    std::unique_ptr<const SExp> summarise(VarMap& vm) const override {
+    Ptr<SExp> summarise(VarMap& vm) const override {
         auto [_, ins] = vm.emplace(name, pos::here());
         assert(ins && "variable names must be unique");
-        return std::make_unique<const SVar>();
+        return mk<SVar>();
     }
 
     const std::string name;
 };
 
 struct Lam : public Exp {
-    Lam(std::string name, std::unique_ptr<const Exp>&& body)
+    Lam(std::string name, Ptr<Exp>&& body)
         : name(std::move(name))
         , body(std::move(body)) {}
 
     std::string str() const override { return "(lam "s + name + "."s + body->str() + ")"s; }
 
-    std::unique_ptr<const SExp> summarise(VarMap& vm) const override {
+    Ptr<SExp> summarise(VarMap& vm) const override {
         auto sbody = body->summarise(vm);
         if (auto i = vm.find(name); i != vm.end()) {
             auto tree = std::move(i->second);
             vm.erase(i);
-            return std::make_unique<const SLam>(std::move(tree), std::move(sbody));
+            return mk<SLam>(std::move(tree), std::move(sbody));
         }
-        return std::make_unique<const SLam>(nullptr, std::move(sbody));
+        return mk<SLam>(nullptr, std::move(sbody));
     }
 
     std::string name;
-    std::unique_ptr<const Exp> body;
+    Ptr<Exp> body;
 };
 
 struct App : public Exp {
-    App(std::unique_ptr<const Exp>&& l, std::unique_ptr<const Exp>&& r)
+    App(Ptr<Exp>&& l, Ptr<Exp>&& r)
         : l(std::move(l))
         , r(std::move(r)) {}
 
     std::string str() const override { return "("s + l->str() + " "s + r->str() + ")"s; }
 
-    std::unique_ptr<const SExp> summarise(VarMap& vml) const override {
+    Ptr<SExp> summarise(VarMap& vml) const override {
         VarMap vmr;
         auto sl = l->summarise(vml);
         auto sr = r->summarise(vmr);
@@ -175,20 +181,17 @@ struct App : public Exp {
             }
         }
 
-        return std::make_unique<const SApp>(std::move(sl), std::move(sr));
+        return mk<SApp>(std::move(sl), std::move(sr));
     }
 
-    std::unique_ptr<const Exp> l;
-    std::unique_ptr<const Exp> r;
+    Ptr<Exp> l;
+    Ptr<Exp> r;
 };
 
 int main() {
-    // (f x) x
-    auto exp = std::make_unique<const App>(std::make_unique<const App>(std::make_unique<const Var>("f"s), std::make_unique<const Var>("x"s)), std::make_unique<const Var>("x"s));
-    // pos tree for x
-    auto pos = pos::both(pos::r(pos::here()), pos::here());
+    // lam x. (y x) x
+    auto exp = mk<Lam>("x"s, mk<App>(mk<App>(mk<Var>("y"s), mk<Var>("x"s)), mk<Var>("x"s)));
     exp->dump();
-    pos->dump();
     VarMap vm;
     auto sexp = exp->summarise(vm);
     sexp->dump();
@@ -196,4 +199,5 @@ int main() {
         std::cout << name << ":" << std::endl;
         tree->dump();
     }
+    static_cast<SLam&>(*sexp).tree->dump();
 }
