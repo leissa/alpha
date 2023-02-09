@@ -1,12 +1,15 @@
 #include "util.h"
 
+// This version includes §4.8: Using the Smaller Subtree
+
 /*
  * Pos
  */
 
 struct Pos : public Dump<Pos> {
-    Pos(Ptr<Pos>&& l, Ptr<Pos>&& r)
-        : l(std::move(l))
+    Pos(int tag, Ptr<Pos>&& l, Ptr<Pos>&& r)
+        : tag(tag)
+        , l(std::move(l))
         , r(std::move(r)) {}
 
     std::string str() const {
@@ -16,6 +19,7 @@ struct Pos : public Dump<Pos> {
         return "x"s;
     }
 
+    int tag;
     Ptr<Pos> l, r;
 };
 
@@ -23,10 +27,8 @@ struct Pos : public Dump<Pos> {
  * SExp
  */
 
-
 /// The Ptr<Pos> of free vars are owned by the VarMap.
 /// Once a variable is bound ownership is transferred to the corresponding SLam.
-
 using VarMap = std::unordered_map<std::string_view, Ptr<Pos>>;
 
 struct SExp : public Dump<SExp> {
@@ -49,12 +51,14 @@ struct SLam : public SExp {
 };
 
 struct SApp : public SExp {
-    SApp(Ptr<SExp>&& l, Ptr<SExp>&& r)
-        : l(std::move(l))
+    SApp(bool swap, Ptr<SExp>&& l, Ptr<SExp>&& r)
+        : swap(swap)
+        , l(std::move(l))
         , r(std::move(r)) {}
 
     std::string str() const override { return "("s + l->str() + " "s + r->str() + ")"s; }
 
+    bool swap; ///< @c true, if bigger VarMap stems from l%eft.
     Ptr<SExp> l, r;
 };
 
@@ -74,7 +78,7 @@ struct Var : public Exp {
     std::string str() const override { return name; }
 
     Ptr<SExp> summarise(VarMap& vm) const override {
-        auto [_, ins] = vm.emplace(name, mk<Pos>(nullptr, nullptr));
+        auto [_, ins] = vm.emplace(name, mk<Pos>(0, nullptr, nullptr));
         assert(ins && "variable names must be unique");
         return mk<SVar>();
     }
@@ -115,21 +119,22 @@ struct App : public Exp {
         auto sl = l->summarise(vml);
         auto sr = r->summarise(vmr);
 
-        for (auto& [_, tree] : vml)
-            tree = mk<Pos>(std::move(tree), nullptr);
+        for (auto& [_, lpos] : vml)
+            lpos = mk<Pos>(lpos->tag + 1, std::move(lpos), nullptr);
 
-        for (auto& [name, r] : vmr) {
+        for (auto& [name, rpos] : vmr) {
             auto [i, ins] = vml.try_emplace(name, nullptr);
-            auto& tree = i->second;
-            if (ins)
-                tree = mk<Pos>(nullptr, std::move(r));
-            else {
-                assert(tree->l && !tree->r);
-                tree->r = std::move(r);
+            auto& lpos = i->second;
+            if (ins) {
+                lpos = mk<Pos>(rpos->tag + 1, nullptr, std::move(rpos));
+            } else {
+                assert(lpos->l && !lpos->r);
+                lpos->r = std::move(rpos);
+                lpos->tag = std::max(lpos->tag, lpos->r->tag + 1);
             }
         }
 
-        return mk<SApp>(std::move(sl), std::move(sr));
+        return mk<SApp>(false, std::move(sl), std::move(sr));
     }
 
     Ptr<Exp> l, r;
