@@ -1,12 +1,10 @@
 #include <cassert>
 
-#include <ios>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "hash.h"
 
@@ -84,7 +82,7 @@ struct SExp {
 };
 
 struct SVar : public SExp {
-    std::string str() const override { return "!"s; }
+    std::string str() const override { return "x"s; }
 };
 
 struct SLam : public SExp {
@@ -195,9 +193,10 @@ int main() {
     VarMap vm;
     auto sexp = exp->summarise(vm);
     sexp->dump();
+
+    std::cout << "position of free vars:" << std::endl;
     for (auto&& [name, tree] : vm) {
         std::cout << name << ":" << std::endl;
         tree->dump();
     }
-    static_cast<SLam&>(*sexp).tree->dump();
 }
