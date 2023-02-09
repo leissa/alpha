@@ -1,7 +1,33 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 
+#include <iostream>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <unordered_map>
+
+using namespace std::string_literals;
+
+/// @name helpers
+///@{
+template<class T, class... Args>
+std::unique_ptr<T> mk(Args&&... args) { return std::make_unique<T>(std::forward<Args>(args)...); }
+
+template<class T>
+using Ptr = std::unique_ptr<T>;
+
+template<class P>
+struct Dump {
+    void dump() const { std::cout << static_cast<const P*>(this)->str() << std::endl; }
+};
+///@}
+
+/// @name hash
+///@{
 constexpr uint64_t operator""_u64(unsigned long long int u) { return uint64_t(u); }
 using hash_t = uint64_t;
 
@@ -38,3 +64,5 @@ hash_t hash_begin(T val) {
     return hash_combine(FNV1::offset, val);
 }
 inline hash_t hash_begin() { return FNV1::offset; }
+///@}
+

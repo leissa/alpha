@@ -1,84 +1,36 @@
-#include <cassert>
-
-#include <iostream>
-#include <memory>
-#include <string>
-#include <string_view>
-#include <unordered_map>
-
-#include "hash.h"
-
-using namespace std::string_literals;
-
-template<class T, class... Args>
-std::unique_ptr<T> mk(Args&&... args) { return std::make_unique<T>(std::forward<Args>(args)...); }
-
-template<class T>
-using Ptr = std::unique_ptr<T>;
+#include "util.h"
 
 /*
  * Pos
  */
 
-namespace pos {
-
-struct Tree {
-    Tree() = default;
-    Tree(Ptr<Tree>&& l, Ptr<Tree>&& r)
+struct Pos : public Dump<Pos> {
+    Pos(Ptr<Pos>&& l, Ptr<Pos>&& r)
         : l(std::move(l))
         , r(std::move(r)) {}
-
-    Tree(Tree&& other) {
-        swap(*this, other);
-    }
-
-    bool here() const { return !l && !r; }
 
     std::string str() const {
         if ( l &&  r) return "("s + l->str() + ", "s + r->str() + ")"s;
         if (!l &&  r) return "(o, " + r->str() + ")"s;
         if ( l && !r) return "("s + l->str() + ", o)"s;
-        assert(here());
         return "x"s;
     }
 
-    void dump() const { std::cout << str() << std::endl; }
-
-    friend void swap(Tree& p1, Tree& p2) {
-        using std::swap;
-        swap(p1.l, p2.l);
-        swap(p1.r, p2.r);
-    }
-
-    Ptr<Tree> l;
-    Ptr<Tree> r;
+    Ptr<Pos> l, r;
 };
-
-using Ptr = std::unique_ptr<Tree>;
-
-Ptr here() { return mk<Tree>(nullptr, nullptr); }
-Ptr l(Ptr&& l) { return mk<Tree>(std::move(l), nullptr); }
-Ptr r(Ptr&& r) { return mk<Tree>(nullptr, std::move(r)); }
-Ptr both(Ptr&& l, Ptr&& r) { return mk<Tree>(std::move(l), std::move(r)); }
-
-template<bool L>
-Ptr one(Ptr&& p) { return L ? l(std::move(p)) : r(std::move(p)); }
-
-}
 
 /*
  * SExp
  */
 
 
-/// The pos::Ptr of free vars are owned by the VarMap.
+/// The Ptr<Pos> of free vars are owned by the VarMap.
 /// Once a variable is bound ownership is transferred to the corresponding SLam.
 
-using VarMap = std::unordered_map<std::string_view, pos::Ptr>;
+using VarMap = std::unordered_map<std::string_view, Ptr<Pos>>;
 
-struct SExp {
+struct SExp : public Dump<SExp> {
     virtual std::string str() const = 0;
-    void dump() const { std::cout << str() << std::endl; }
 };
 
 struct SVar : public SExp {
@@ -86,13 +38,13 @@ struct SVar : public SExp {
 };
 
 struct SLam : public SExp {
-    SLam(pos::Ptr&& tree, Ptr<SExp>&& body)
+    SLam(Ptr<Pos>&& tree, Ptr<SExp>&& body)
         : tree(std::move(tree))
         , body(std::move(body)) {}
 
     std::string str() const override { return "(lam "s + tree->str() + "."s + body->str() + ")"s; }
 
-    pos::Ptr tree;
+    Ptr<Pos> tree;
     Ptr<SExp> body;
 };
 
@@ -103,16 +55,14 @@ struct SApp : public SExp {
 
     std::string str() const override { return "("s + l->str() + " "s + r->str() + ")"s; }
 
-    Ptr<SExp> l;
-    Ptr<SExp> r;
+    Ptr<SExp> l, r;
 };
 
 /*
  * Exp
  */
 
-struct Exp {
-    void dump() const { std::cout << str() << std::endl; }
+struct Exp : public Dump<Exp> {
     virtual std::string str() const = 0;
     virtual Ptr<SExp> summarise(VarMap&) const = 0;
 };
@@ -124,7 +74,7 @@ struct Var : public Exp {
     std::string str() const override { return name; }
 
     Ptr<SExp> summarise(VarMap& vm) const override {
-        auto [_, ins] = vm.emplace(name, pos::here());
+        auto [_, ins] = vm.emplace(name, mk<Pos>(nullptr, nullptr));
         assert(ins && "variable names must be unique");
         return mk<SVar>();
     }
@@ -166,13 +116,13 @@ struct App : public Exp {
         auto sr = r->summarise(vmr);
 
         for (auto& [_, tree] : vml)
-            tree = pos::l(std::move(tree));
+            tree = mk<Pos>(std::move(tree), nullptr);
 
         for (auto& [name, r] : vmr) {
             auto [i, ins] = vml.try_emplace(name, nullptr);
             auto& tree = i->second;
             if (ins)
-                tree = pos::r(std::move(r));
+                tree = mk<Pos>(nullptr, std::move(r));
             else {
                 assert(tree->l && !tree->r);
                 tree->r = std::move(r);
@@ -182,8 +132,7 @@ struct App : public Exp {
         return mk<SApp>(std::move(sl), std::move(sr));
     }
 
-    Ptr<Exp> l;
-    Ptr<Exp> r;
+    Ptr<Exp> l, r;
 };
 
 int main() {
