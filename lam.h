@@ -11,14 +11,21 @@ struct SExp;
  */
 
 struct Pos : public Dump<Pos> {
+#if ENABLE_SMALLER_SUBTREE
     Pos(int tag, Ptr<Pos>&& l, Ptr<Pos>&& r)
         : tag(tag)
         , l(std::move(l))
         , r(std::move(r)) {}
 
+    int tag;
+#else
+    Pos(Ptr<Pos>&& l, Ptr<Pos>&& r)
+        : l(std::move(l))
+        , r(std::move(r)) {}
+#endif
+
     std::string str() const;
 
-    int tag;
     Ptr<Pos> l, r;
 };
 
@@ -95,14 +102,21 @@ struct SLam : public SExp {
 };
 
 struct SApp : public SExp {
+#if ENABLE_SMALLER_SUBTREE
     SApp(bool swap, Ptr<SExp>&& l, Ptr<SExp>&& r)
         : swap(swap)
         , l(std::move(l))
         , r(std::move(r)) {}
 
+    bool swap; ///< @c true, if bigger VarMap stems from l%eft.
+#else
+    SApp(Ptr<SExp>&& l, Ptr<SExp>&& r)
+        : l(std::move(l))
+        , r(std::move(r)) {}
+#endif
+
     std::string str() const override;
     Ptr<Exp> rebuild(VarMap&) const override;
 
-    bool swap; ///< @c true, if bigger VarMap stems from l%eft.
     Ptr<SExp> l, r;
 };

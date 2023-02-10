@@ -9,5 +9,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_executable(v1 v1.cpp)
-add_executable(v2 v2.cpp)
+add_executable(v1 lam.cpp)
+add_executable(v2 lam.cpp)
+
+target_compile_definitions(v2 PUBLIC ENABLE_SMALLER_SUBTREE)
