@@ -1,144 +1,74 @@
-#include "util.h"
+#include "v2.h"
 
 // This version includes §4.8: Using the Smaller Subtree
 
 /*
- * Pos
+ * str
  */
 
-struct Pos : public Dump<Pos> {
-    Pos(int tag, Ptr<Pos>&& l, Ptr<Pos>&& r)
-        : tag(tag)
-        , l(std::move(l))
-        , r(std::move(r)) {}
+std::string Pos::str() const {
+    if ( l &&  r) return "("s + l->str() + ", "s + r->str() + ")"s;
+    if (!l &&  r) return "(o, " + r->str() + ")"s;
+    if ( l && !r) return "("s + l->str() + ", o)"s;
+    return "x"s;
+}
 
-    std::string str() const {
-        if ( l &&  r) return "("s + l->str() + ", "s + r->str() + ")"s;
-        if (!l &&  r) return "(o, " + r->str() + ")"s;
-        if ( l && !r) return "("s + l->str() + ", o)"s;
-        return "x"s;
-    }
+std::string Var::str() const { return name; }
+std::string Lam::str() const { return "(lam "s + name + "."s + body->str() + ")"s; }
+std::string App::str() const { return "("s + l->str() + " "s + r->str() + ")"s; }
 
-    int tag;
-    Ptr<Pos> l, r;
-};
+std::string SVar::str() const { return "x"s; }
+std::string SLam::str() const { return "(lam "s + tree->str() + "."s + body->str() + ")"s; }
+std::string SApp::str() const { return "("s + l->str() + " "s + r->str() + ")"s; }
 
 /*
- * SExp
+ * summarise
  */
 
-/// The Ptr<Pos> of free vars are owned by the VarMap.
-/// Once a variable is bound ownership is transferred to the corresponding SLam.
-using VarMap = std::unordered_map<std::string_view, Ptr<Pos>>;
+Ptr<SExp> Var::summarise(VarMap& vm) const {
+    auto [_, ins] = vm.emplace(name, mk<Pos>(0, nullptr, nullptr));
+    assert(ins && "variable names must be unique");
+    return mk<SVar>();
+}
 
-struct SExp : public Dump<SExp> {
-    virtual std::string str() const = 0;
-};
 
-struct SVar : public SExp {
-    std::string str() const override { return "x"s; }
-};
+Ptr<SExp> Lam::summarise(VarMap& vm) const {
+    auto sbody = body->summarise(vm);
+    if (auto i = vm.find(name); i != vm.end()) {
+        auto tree = std::move(i->second);
+        vm.erase(i);
+        return mk<SLam>(std::move(tree), std::move(sbody));
+    }
+    return mk<SLam>(nullptr, std::move(sbody));
+}
 
-struct SLam : public SExp {
-    SLam(Ptr<Pos>&& tree, Ptr<SExp>&& body)
-        : tree(std::move(tree))
-        , body(std::move(body)) {}
+Ptr<SExp> App::summarise(VarMap& vml) const {
+    VarMap vmr;
+    auto sl = l->summarise(vml);
+    auto sr = r->summarise(vmr);
 
-    std::string str() const override { return "(lam "s + tree->str() + "."s + body->str() + ")"s; }
+    // make sure vml is bigger
+    bool swap = vml.size() < vmr.size();
+    if (swap) std::swap(vml, vmr);
 
-    Ptr<Pos> tree;
-    Ptr<SExp> body;
-};
+    for (auto& [name, rpos] : vmr) { // smaller vm
+        auto [i, ins] = vml.try_emplace(name, nullptr);
+        auto& lpos = i->second;
+        if (ins) {
+            lpos = mk<Pos>(rpos->tag + 1, nullptr, std::move(rpos));
+        } else {
+            assert(lpos->l && !lpos->r);
+            lpos->r = std::move(rpos);
+            lpos->tag = std::max(lpos->tag, lpos->r->tag + 1);
+        }
+    }
 
-struct SApp : public SExp {
-    SApp(bool swap, Ptr<SExp>&& l, Ptr<SExp>&& r)
-        : swap(swap)
-        , l(std::move(l))
-        , r(std::move(r)) {}
-
-    std::string str() const override { return "("s + l->str() + " "s + r->str() + ")"s; }
-
-    bool swap; ///< @c true, if bigger VarMap stems from l%eft.
-    Ptr<SExp> l, r;
-};
+    return mk<SApp>(swap, std::move(sl), std::move(sr));
+}
 
 /*
- * Exp
+ * rebuild
  */
-
-struct Exp : public Dump<Exp> {
-    virtual std::string str() const = 0;
-    virtual Ptr<SExp> summarise(VarMap&) const = 0;
-};
-
-struct Var : public Exp {
-    Var(std::string&& name)
-        : name(std::move(name)) {}
-
-    std::string str() const override { return name; }
-
-    Ptr<SExp> summarise(VarMap& vm) const override {
-        auto [_, ins] = vm.emplace(name, mk<Pos>(0, nullptr, nullptr));
-        assert(ins && "variable names must be unique");
-        return mk<SVar>();
-    }
-
-    const std::string name;
-};
-
-struct Lam : public Exp {
-    Lam(std::string name, Ptr<Exp>&& body)
-        : name(std::move(name))
-        , body(std::move(body)) {}
-
-    std::string str() const override { return "(lam "s + name + "."s + body->str() + ")"s; }
-
-    Ptr<SExp> summarise(VarMap& vm) const override {
-        auto sbody = body->summarise(vm);
-        if (auto i = vm.find(name); i != vm.end()) {
-            auto tree = std::move(i->second);
-            vm.erase(i);
-            return mk<SLam>(std::move(tree), std::move(sbody));
-        }
-        return mk<SLam>(nullptr, std::move(sbody));
-    }
-
-    std::string name;
-    Ptr<Exp> body;
-};
-
-struct App : public Exp {
-    App(Ptr<Exp>&& l, Ptr<Exp>&& r)
-        : l(std::move(l))
-        , r(std::move(r)) {}
-
-    std::string str() const override { return "("s + l->str() + " "s + r->str() + ")"s; }
-
-    Ptr<SExp> summarise(VarMap& vml) const override {
-        VarMap vmr;
-        auto sl = l->summarise(vml);
-        auto sr = r->summarise(vmr);
-
-        for (auto& [_, lpos] : vml)
-            lpos = mk<Pos>(lpos->tag + 1, std::move(lpos), nullptr);
-
-        for (auto& [name, rpos] : vmr) {
-            auto [i, ins] = vml.try_emplace(name, nullptr);
-            auto& lpos = i->second;
-            if (ins) {
-                lpos = mk<Pos>(rpos->tag + 1, nullptr, std::move(rpos));
-            } else {
-                assert(lpos->l && !lpos->r);
-                lpos->r = std::move(rpos);
-                lpos->tag = std::max(lpos->tag, lpos->r->tag + 1);
-            }
-        }
-
-        return mk<SApp>(false, std::move(sl), std::move(sr));
-    }
-
-    Ptr<Exp> l, r;
-};
 
 int main() {
     // lam x. (y x) x
@@ -154,3 +84,4 @@ int main() {
         tree->dump();
     }
 }
+
