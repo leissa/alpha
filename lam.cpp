@@ -18,8 +18,8 @@ std::string Lam::str() const { return "(lam "s + name + "."s + body->str() + ")"
 std::string App::str() const { return "("s + l->str() + " "s + r->str() + ")"s; }
 
 std::string SVar::str() const { return "x"s; }
-std::string SLam::str() const { return "(lam "s + tree->str() + "."s + body->str() + ")"s; }
-std::string SApp::str() const { return "("s + l->str() + " "s + r->str() + ")"s; }
+std::string SLam::str() const { return "(lam "s + pos->str() + "."s + sbody->str() + ")"s; }
+std::string SApp::str() const { return "("s + sl->str() + " "s + sr->str() + ")"s; }
 
 /*
  * summarise
@@ -38,9 +38,9 @@ Ptr<SExp> Var::summarise(VarMap& vm) const {
 Ptr<SExp> Lam::summarise(VarMap& vm) const {
     auto sbody = body->summarise(vm);
     if (auto i = vm.find(name); i != vm.end()) {
-        auto tree = std::move(i->second);
+        auto pos = std::move(i->second);
         vm.erase(i);
-        return mk<SLam>(std::move(tree), std::move(sbody));
+        return mk<SLam>(std::move(pos), std::move(sbody));
     }
     return mk<SLam>(nullptr, std::move(sbody));
 }
@@ -98,16 +98,21 @@ Ptr<SExp> App::summarise(VarMap& vml) const {
  * rebuild
  */
 
-Ptr<Exp> SVar::rebuild(VarMap& vm) const {
+Ptr<Exp> SVar::rebuild(VarMap& vm) {
     assert(vm.size() == 1);
     return mk<Var>(std::string(vm.begin()->first));
 }
 
-Ptr<Exp> SLam::rebuild(VarMap& vm) const {
-    return {};
+Ptr<Exp> SLam::rebuild(VarMap& vm) {
+    static int counter = 0;
+    std::string name = "x_"s + std::to_string(counter++);
+    auto [_, ins] = vm.emplace(name, std::move(this->pos));
+    assert(ins && "variable names must be unique");
+    auto body = sbody->rebuild(vm);
+    return mk<Lam>(std::move(name), std::move(body));
 }
 
-Ptr<Exp> SApp::rebuild(VarMap& vm) const {
+Ptr<Exp> SApp::rebuild(VarMap& vm) {
     assert(vm.size() == 1);
     return {};
 }
@@ -125,9 +130,9 @@ int main() {
     sexp->dump();
 
     std::cout << "position of free vars:" << std::endl;
-    for (auto&& [name, tree] : vm) {
+    for (auto&& [name, pos] : vm) {
         std::cout << name << ":" << std::endl;
-        tree->dump();
+        pos->dump();
     }
 }
 
